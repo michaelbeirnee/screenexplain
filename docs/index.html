@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScreenExplain Remote</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f5f5f7;
+    --panel: #ffffff;
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --border: #d8d8dc;
+    --accent: #0071e3;
+    --accent-text: #ffffff;
+    --danger: #d33;
+    --ok: #1a9e4a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1e;
+      --panel: #2c2c2e;
+      --text: #f5f5f7;
+      --muted: #9a9a9e;
+      --border: #3a3a3c;
+      --accent: #0a84ff;
+      --accent-text: #ffffff;
+      --danger: #ff6961;
+      --ok: #32d74b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 24px 16px 64px;
+  }
+  main {
+    width: 100%;
+    max-width: 560px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 8px 0 0;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0 0 8px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px;
+  }
+  label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  input[type=text], input[type=password], input[type=number], select {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    margin-bottom: 12px;
+  }
+  button {
+    appearance: none;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--accent);
+    color: var(--accent-text);
+  }
+  button.secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .status-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    margin-bottom: 14px;
+  }
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+  }
+  .dot.on { background: var(--ok); }
+  .dot.off { background: var(--muted); }
+  .dot.error { background: var(--danger); }
+  #transcript {
+    white-space: pre-wrap;
+    font-size: 14px;
+    line-height: 1.45;
+    max-height: 320px;
+    overflow-y: auto;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+  }
+  #transcript:empty::before {
+    content: "Nothing yet.";
+    color: var(--muted);
+  }
+  .error-banner {
+    background: color-mix(in srgb, var(--danger) 15%, transparent);
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    display: none;
+  }
+  .error-banner.visible { display: block; }
+  .footer-link {
+    text-align: center;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .footer-link a { color: inherit; }
+  #setupScreen { display: none; }
+  #dashboard { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>ScreenExplain Remote</h1>
+    <p class="subtitle">View and control the ScreenExplain menu bar app running on your Mac.</p>
+  </div>
+
+  <section id="setupScreen" class="card">
+    <label for="baseUrlInput">Server URL</label>
+    <input id="baseUrlInput" type="text" placeholder="https://your-mac.ts.net (or ngrok/cloudflared URL)">
+    <label for="tokenInput">Access token</label>
+    <input id="tokenInput" type="password" placeholder="Copy from the app's menu bar → Copy Remote Access Token">
+    <div class="error-banner" id="setupError"></div>
+    <div class="row" style="margin-top: 4px;">
+      <button id="connectButton">Connect</button>
+    </div>
+  </section>
+
+  <section id="dashboard" class="card">
+    <div class="status-line">
+      <span class="dot" id="connDot"></span>
+      <span id="connLabel">Connecting…</span>
+    </div>
+
+    <div class="row" style="margin-bottom: 16px;">
+      <button id="toggleActiveButton">Toggle Active Mode</button>
+      <button id="pushAudioButton" class="secondary">Push Audio Now</button>
+      <button id="disconnectButton" class="secondary" style="margin-left: auto;">Change Server…</button>
+    </div>
+
+    <div class="grid">
+      <div>
+        <label for="providerSelect">Provider</label>
+        <select id="providerSelect"></select>
+      </div>
+      <div>
+        <label for="modeSelect">Mode</label>
+        <select id="modeSelect"></select>
+      </div>
+      <div>
+        <label for="intervalSelect">Interval</label>
+        <select id="intervalSelect">
+          <option value="3">Every 3s</option>
+          <option value="5">Every 5s</option>
+          <option value="10">Every 10s</option>
+          <option value="20">Every 20s</option>
+        </select>
+      </div>
+      <div>
+        <label for="manualPushSelect">Audio Push Mode</label>
+        <select id="manualPushSelect">
+          <option value="false">Automatic (timer)</option>
+          <option value="true">Manual push only</option>
+        </select>
+      </div>
+    </div>
+
+    <label for="languageInput">Target language</label>
+    <div class="row">
+      <input id="languageInput" type="text" style="flex: 1;" placeholder="e.g. Spanish">
+      <button id="languageButton" class="secondary">Save</button>
+    </div>
+
+    <label style="margin-top: 8px;">Live output</label>
+    <div id="transcript"></div>
+  </section>
+
+  <p class="footer-link">Runs entirely against your own Mac — nothing is sent through any third-party server.</p>
+</main>
+
+<script>
+(function () {
+  const STORAGE_KEY = 'screenexplain-remote-config';
+  const POLL_INTERVAL_MS = 1500;
+
+  const setupScreen = document.getElementById('setupScreen');
+  const dashboard = document.getElementById('dashboard');
+  const baseUrlInput = document.getElementById('baseUrlInput');
+  const tokenInput = document.getElementById('tokenInput');
+  const connectButton = document.getElementById('connectButton');
+  const setupError = document.getElementById('setupError');
+  const disconnectButton = document.getElementById('disconnectButton');
+
+  const connDot = document.getElementById('connDot');
+  const connLabel = document.getElementById('connLabel');
+  const toggleActiveButton = document.getElementById('toggleActiveButton');
+  const pushAudioButton = document.getElementById('pushAudioButton');
+  const providerSelect = document.getElementById('providerSelect');
+  const modeSelect = document.getElementById('modeSelect');
+  const intervalSelect = document.getElementById('intervalSelect');
+  const manualPushSelect = document.getElementById('manualPushSelect');
+  const languageInput = document.getElementById('languageInput');
+  const languageButton = document.getElementById('languageButton');
+  const transcript = document.getElementById('transcript');
+
+  let config = null;
+  let pollTimer = null;
+  let editingLanguage = false;
+
+  function loadConfig() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveConfig(cfg) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+  }
+
+  function clearConfig() {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
+  async function api(path, options) {
+    const res = await fetch(config.baseUrl.replace(/\/$/, '') + path, {
+      ...options,
+      headers: {
+        'Authorization': 'Bearer ' + config.token,
+        'Content-Type': 'application/json',
+        ...(options && options.headers)
+      }
+    });
+    if (res.status === 401) {
+      throw new Error('Unauthorized — check the access token.');
+    }
+    if (!res.ok) {
+      throw new Error('Request failed (' + res.status + ')');
+    }
+    return res.json();
+  }
+
+  function applyStatus(status) {
+    connDot.className = 'dot on';
+    connLabel.textContent = status.activeModeRunning ? 'Connected — Active Mode running' : 'Connected — idle';
+    toggleActiveButton.textContent = status.activeModeRunning ? 'Stop Active Mode' : 'Start Active Mode';
+
+    if (providerSelect.dataset.filled !== '1') {
+      status.availableProviders.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p;
+        opt.textContent = p[0].toUpperCase() + p.slice(1);
+        providerSelect.appendChild(opt);
+      });
+      providerSelect.dataset.filled = '1';
+    }
+    if (modeSelect.dataset.filled !== '1') {
+      const labels = { explain: 'Explain', translateScreen: 'Translate Screen Text', translateAudio: 'Translate Audio (Live)' };
+      status.availableModes.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = labels[m] || m;
+        modeSelect.appendChild(opt);
+      });
+      modeSelect.dataset.filled = '1';
+    }
+
+    providerSelect.value = status.provider;
+    modeSelect.value = status.mode;
+    intervalSelect.value = String(Math.round(status.interval));
+    manualPushSelect.value = String(status.manualPushEnabled);
+    if (!editingLanguage) languageInput.value = status.targetLanguage;
+
+    transcript.textContent = status.transcript || '';
+    transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  function showError(message) {
+    connDot.className = 'dot error';
+    connLabel.textContent = message;
+  }
+
+  async function poll() {
+    try {
+      const status = await api('/api/status');
+      applyStatus(status);
+    } catch (err) {
+      showError(err.message || 'Connection lost');
+    }
+  }
+
+  function startPolling() {
+    stopPolling();
+    poll();
+    pollTimer = setInterval(poll, POLL_INTERVAL_MS);
+  }
+
+  function stopPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  function showSetup(message) {
+    stopPolling();
+    dashboard.style.display = 'none';
+    setupScreen.style.display = 'block';
+    if (message) {
+      setupError.textContent = message;
+      setupError.classList.add('visible');
+    } else {
+      setupError.classList.remove('visible');
+    }
+  }
+
+  function showDashboard() {
+    setupScreen.style.display = 'none';
+    dashboard.style.display = 'block';
+    startPolling();
+  }
+
+  connectButton.addEventListener('click', () => {
+    const baseUrl = baseUrlInput.value.trim();
+    const token = tokenInput.value.trim();
+    if (!baseUrl || !token) {
+      setupError.textContent = 'Enter both a server URL and an access token.';
+      setupError.classList.add('visible');
+      return;
+    }
+    config = { baseUrl, token };
+    saveConfig(config);
+    showDashboard();
+  });
+
+  disconnectButton.addEventListener('click', () => {
+    clearConfig();
+    config = null;
+    showSetup();
+  });
+
+  toggleActiveButton.addEventListener('click', async () => {
+    try {
+      const status = await api('/api/toggle-active-mode', { method: 'POST' });
+      applyStatus(status);
+    } catch (err) { showError(err.message); }
+  });
+
+  pushAudioButton.addEventListener('click', async () => {
+    try {
+      await api('/api/push-audio-now', { method: 'POST' });
+    } catch (err) { showError(err.message); }
+  });
+
+  providerSelect.addEventListener('change', async () => {
+    try {
+      const status = await api('/api/provider', { method: 'POST', body: JSON.stringify({ provider: providerSelect.value }) });
+      applyStatus(status);
+    } catch (err) { showError(err.message); }
+  });
+
+  modeSelect.addEventListener('change', async () => {
+    try {
+      const status = await api('/api/mode', { method: 'POST', body: JSON.stringify({ mode: modeSelect.value }) });
+      applyStatus(status);
+    } catch (err) { showError(err.message); }
+  });
+
+  intervalSelect.addEventListener('change', async () => {
+    try {
+      const status = await api('/api/interval', { method: 'POST', body: JSON.stringify({ seconds: Number(intervalSelect.value) }) });
+      applyStatus(status);
+    } catch (err) { showError(err.message); }
+  });
+
+  manualPushSelect.addEventListener('change', async () => {
+    try {
+      const status = await api('/api/manual-push', { method: 'POST', body: JSON.stringify({ enabled: manualPushSelect.value === 'true' }) });
+      applyStatus(status);
+    } catch (err) { showError(err.message); }
+  });
+
+  languageInput.addEventListener('focus', () => { editingLanguage = true; });
+  languageInput.addEventListener('blur', () => { editingLanguage = false; });
+
+  languageButton.addEventListener('click', async () => {
+    try {
+      const status = await api('/api/target-language', { method: 'POST', body: JSON.stringify({ language: languageInput.value.trim() }) });
+      applyStatus(status);
+    } catch (err) { showError(err.message); }
+  });
+
+  config = loadConfig();
+  if (config) {
+    baseUrlInput.value = config.baseUrl;
+    tokenInput.value = config.token;
+    showDashboard();
+  } else {
+    showSetup();
+  }
+})();
+</script>
+</body>
+</html>

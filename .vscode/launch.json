@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cluely}/ScreenExplain",
+            "name": "Debug ScreenExplain (ScreenExplain)",
+            "target": "ScreenExplain",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug ScreenExplain (ScreenExplain)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cluely}/ScreenExplain",
+            "name": "Release ScreenExplain (ScreenExplain)",
+            "target": "ScreenExplain",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release ScreenExplain (ScreenExplain)"
+        }
+    ]
+}
