@@ -114,6 +114,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         remoteServerMenuItem = remoteServerItem
         menu.addItem(withTitle: "Copy Remote Access Token", action: #selector(copyRemoteAccessToken), keyEquivalent: "")
         menu.addItem(withTitle: "Regenerate Remote Access Token…", action: #selector(regenerateRemoteAccessToken), keyEquivalent: "")
+
+        let showPanelItem = NSMenuItem(title: "Show Panel on Remote Explain Now", action: #selector(toggleShowPanelOnExplainNow), keyEquivalent: "")
+        showPanelItem.target = self
+        menu.addItem(showPanelItem)
         menu.addItem(.separator())
 
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -141,6 +145,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             if item.title == "Include Microphone (Audio Mode)" {
                 item.state = Settings.micCaptureEnabled ? .on : .off
+            }
+            if item.title == "Show Panel on Remote Explain Now" {
+                item.state = Settings.showPanelOnExplainNow ? .on : .off
             }
         }
 
@@ -175,6 +182,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             stopActiveMode()
             restartActiveModeKeepingRegion()
         }
+    }
+
+    @objc private func toggleShowPanelOnExplainNow() {
+        Settings.showPanelOnExplainNow.toggle()
     }
 
     @objc private func setMode(_ sender: NSMenuItem) {
@@ -299,12 +310,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    private func runOneShot(imageData: Data, apiKey: String, near point: NSPoint) {
+    /// forceShow always pops the panel on screen. When false, the panel's
+    /// content still updates (so remote viewers see it via /api/status) but
+    /// the window itself only comes forward if it was already visible —
+    /// a closed panel stays closed.
+    private func runOneShot(imageData: Data, apiKey: String, near point: NSPoint, forceShow: Bool = true) {
         let panel = ResultPanel.shared ?? ResultPanel()
         ResultPanel.shared = panel
         panel.title = Settings.mode == .translateScreen ? "Translate" : "Explain"
         panel.resetText()
-        panel.showNear(point: point)
+        if forceShow || panel.isVisible {
+            panel.showNear(point: point)
+        }
 
         Task {
             do {
@@ -504,12 +521,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             stopClickMode()
             return
         }
-        performRegionCapture(region: region, apiKey: apiKey, near: point)
+        // Always pops the panel — the user is physically here and just clicked.
+        performRegionCapture(region: region, apiKey: apiKey, near: point, forceShow: true)
     }
 
     /// Shared by the local Option+Click trigger and the remote "explain now"
     /// trigger — captures the given region and runs it through runOneShot.
-    private func performRegionCapture(region: SelectedRegion, apiKey: String, near point: NSPoint) {
+    private func performRegionCapture(region: SelectedRegion, apiKey: String, near point: NSPoint, forceShow: Bool) {
         guard !isClickCapturing else { return }
         isClickCapturing = true
 
@@ -518,7 +536,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             await MainActor.run {
                 self.isClickCapturing = false
                 guard let imageData else { return }
-                self.runOneShot(imageData: imageData, apiKey: apiKey, near: point)
+                self.runOneShot(imageData: imageData, apiKey: apiKey, near: point, forceShow: forceShow)
             }
         }
     }
@@ -526,12 +544,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Remote equivalent of an Option+Click: captures whatever region was
     /// last selected (via Active Mode or Click to Explain) right now,
     /// without needing anyone physically at the Mac. Returns false if there's
-    /// no region yet or the current mode doesn't support it.
+    /// no region yet or the current mode doesn't support it. Whether this
+    /// pops the panel on screen (vs. just updating it for remote viewers) is
+    /// governed by Settings.showPanelOnExplainNow.
     private func explainNow() -> Bool {
         guard let apiKey = Keychain.loadAPIKey(), !apiKey.isEmpty else { return false }
         guard Settings.mode != .translateAudio else { return false }
         guard let region = selectedRegion else { return false }
-        performRegionCapture(region: region, apiKey: apiKey, near: topRightScreenPoint())
+        performRegionCapture(region: region, apiKey: apiKey, near: topRightScreenPoint(), forceShow: Settings.showPanelOnExplainNow)
         return true
     }
 
@@ -725,6 +745,7 @@ extension AppDelegate: RemoteServerDelegate {
             interval: Settings.activeModeInterval,
             manualPushEnabled: Settings.audioManualPushEnabled,
             micEnabled: Settings.micCaptureEnabled,
+            showPanelOnExplainNow: Settings.showPanelOnExplainNow,
             panelTitle: ResultPanel.shared?.title ?? "",
             transcript: ResultPanel.shared?.currentText ?? ""
         )
@@ -756,6 +777,10 @@ extension AppDelegate: RemoteServerDelegate {
 
     func remoteSetMicEnabled(_ enabled: Bool) {
         applyMicCapture(enabled)
+    }
+
+    func remoteSetShowPanelOnExplainNow(_ enabled: Bool) {
+        Settings.showPanelOnExplainNow = enabled
     }
 
     func remotePushAudioNow() {

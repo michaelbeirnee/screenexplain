@@ -8,6 +8,7 @@ enum Settings {
     private static let audioManualPushKey = "audioManualPush"
     private static let remoteServerEnabledKey = "remoteServerEnabled"
     private static let micCaptureDisabledKey = "micCaptureDisabled"
+    private static let hidePanelOnExplainNowKey = "hidePanelOnExplainNow"
 
     static var mode: AppMode {
         get { AppMode(rawValue: defaults.string(forKey: modeKey) ?? "") ?? .explain }
@@ -52,5 +53,16 @@ enum Settings {
     static var micCaptureEnabled: Bool {
         get { !defaults.bool(forKey: micCaptureDisabledKey) }
         set { defaults.set(!newValue, forKey: micCaptureDisabledKey) }
+    }
+
+    /// When true, a remote "Explain Now" trigger only updates the panel's
+    /// content (visible via the web dashboard's live output) without forcing
+    /// the window on screen if it's currently closed. If it's already open,
+    /// it still updates in place. Local triggers (hotkey, Option+Click)
+    /// always show the panel regardless of this setting, since the user is
+    /// physically there to see it pop up. Defaults to showing (off).
+    static var showPanelOnExplainNow: Bool {
+        get { !defaults.bool(forKey: hidePanelOnExplainNowKey) }
+        set { defaults.set(!newValue, forKey: hidePanelOnExplainNowKey) }
     }
 }

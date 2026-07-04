@@ -10,6 +10,7 @@ protocol RemoteServerDelegate: AnyObject {
     func remoteSetInterval(_ seconds: Double)
     func remoteSetManualPush(_ enabled: Bool)
     func remoteSetMicEnabled(_ enabled: Bool)
+    func remoteSetShowPanelOnExplainNow(_ enabled: Bool)
     func remotePushAudioNow()
     /// Captures whatever region was last selected and explains/translates it
     /// right now — the remote equivalent of an Option+Click. Returns false if
@@ -27,6 +28,7 @@ struct RemoteStatus: Codable {
     var interval: Double
     var manualPushEnabled: Bool
     var micEnabled: Bool
+    var showPanelOnExplainNow: Bool
     var panelTitle: String
     var transcript: String
 }
@@ -152,6 +154,14 @@ final class RemoteServer: @unchecked Sendable {
                 return Self.json(.badRequest, ["error": "invalid value"])
             }
             await MainActor.run { delegate.remoteSetMicEnabled(enabled) }
+            let status = await MainActor.run { delegate.remoteStatus() }
+            return Self.json(.ok, status)
+
+        case (.POST, "/api/show-panel-on-explain-now"):
+            guard let enabled: Bool = await field(request, "enabled") else {
+                return Self.json(.badRequest, ["error": "invalid value"])
+            }
+            await MainActor.run { delegate.remoteSetShowPanelOnExplainNow(enabled) }
             let status = await MainActor.run { delegate.remoteStatus() }
             return Self.json(.ok, status)
 

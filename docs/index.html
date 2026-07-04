@@ -233,6 +233,13 @@
           <option value="false">Excluded</option>
         </select>
       </div>
+      <div>
+        <label for="showPanelSelect">Explain Now Panel</label>
+        <select id="showPanelSelect">
+          <option value="false">Keep hidden if closed</option>
+          <option value="true">Always pop on screen</option>
+        </select>
+      </div>
     </div>
 
     <label for="languageInput">Target language</label>
@@ -273,6 +280,7 @@
   const intervalSelect = document.getElementById('intervalSelect');
   const manualPushSelect = document.getElementById('manualPushSelect');
   const micSelect = document.getElementById('micSelect');
+  const showPanelSelect = document.getElementById('showPanelSelect');
   const languageInput = document.getElementById('languageInput');
   const languageButton = document.getElementById('languageButton');
   const transcript = document.getElementById('transcript');
@@ -345,6 +353,7 @@
     intervalSelect.value = String(Math.round(status.interval));
     manualPushSelect.value = String(status.manualPushEnabled);
     micSelect.value = String(status.micEnabled);
+    showPanelSelect.value = String(status.showPanelOnExplainNow);
     if (!editingLanguage) languageInput.value = status.targetLanguage;
 
     transcript.textContent = status.transcript || '';
@@ -464,6 +473,13 @@
   micSelect.addEventListener('change', async () => {
     try {
       const status = await api('/api/mic-enabled', { method: 'POST', body: JSON.stringify({ enabled: micSelect.value === 'true' }) });
+      applyStatus(status);
+    } catch (err) { showError(err.message); }
+  });
+
+  showPanelSelect.addEventListener('change', async () => {
+    try {
+      const status = await api('/api/show-panel-on-explain-now', { method: 'POST', body: JSON.stringify({ enabled: showPanelSelect.value === 'true' }) });
       applyStatus(status);
     } catch (err) { showError(err.message); }
   });
