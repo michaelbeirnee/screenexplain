@@ -356,8 +356,11 @@
     showPanelSelect.value = String(status.showPanelOnExplainNow);
     if (!editingLanguage) languageInput.value = status.targetLanguage;
 
+    const wasAtBottom = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 24;
     transcript.textContent = status.transcript || '';
-    transcript.scrollTop = transcript.scrollHeight;
+    if (wasAtBottom) {
+      transcript.scrollTop = transcript.scrollHeight;
+    }
   }
 
   function showError(message) {
