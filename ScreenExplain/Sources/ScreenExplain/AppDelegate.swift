@@ -1,5 +1,16 @@
 import AppKit
 
+enum ClickModeError: LocalizedError {
+    case audioModeNotSupported
+
+    var errorDescription: String? {
+        switch self {
+        case .audioModeNotSupported:
+            return "Click to Explain doesn't apply to Translate Audio mode. Switch to Explain or Translate Screen Text first."
+        }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var globalMonitor: Any?
@@ -14,6 +25,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Persists across in-place restarts (e.g. changing the interval) so
     /// those don't re-prompt; only a fresh Active Mode toggle-on does.
     private var activeModeRegion: SelectedRegion?
+
+    private var isClickModeRunning = false
+    private var clickModeRegion: SelectedRegion?
+    private var clickModeMonitor: Any?
+    private var isClickCapturing = false
 
     private static let idleIcon = "text.viewfinder"
     private static let activeIcon = "eye.fill"
@@ -48,6 +64,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let activeModeItem = NSMenuItem(title: "Active Mode", action: #selector(toggleActiveMode), keyEquivalent: "")
         activeModeItem.target = self
         menu.addItem(activeModeItem)
+
+        let clickModeItem = NSMenuItem(title: "Click to Explain (⌥+Click)", action: #selector(toggleClickMode), keyEquivalent: "")
+        clickModeItem.target = self
+        menu.addItem(clickModeItem)
 
         let intervalMenu = NSMenu()
         for seconds in [3.0, 5.0, 10.0, 20.0] {
@@ -112,6 +132,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if item.title == "Active Mode" {
                 item.state = isActiveModeRunning ? .on : .off
             }
+            if item.title == "Click to Explain (⌥+Click)" {
+                item.state = isClickModeRunning ? .on : .off
+            }
             if item.title == "Manual Push (Audio)" {
                 item.state = Settings.audioManualPushEnabled ? .on : .off
             }
@@ -170,6 +193,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if isActiveModeRunning {
             stopActiveMode()
             startActiveMode()
+        }
+        if isClickModeRunning && mode == .translateAudio {
+            stopClickMode()
         }
     }
 
@@ -353,7 +379,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func beginActiveMode(apiKey: String) {
         isActiveModeRunning = true
-        statusItem?.button?.image = NSImage(systemSymbolName: Self.activeIcon, accessibilityDescription: "Active")
+        updateStatusIcon()
 
         let panel = ResultPanel.shared ?? ResultPanel()
         ResultPanel.shared = panel
@@ -412,7 +438,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         AudioCapture.shared.stop()
         MicrophoneCapture.shared.stop()
         lastAudioTranscript = ""
-        statusItem?.button?.image = NSImage(systemSymbolName: Self.idleIcon, accessibilityDescription: "Explain")
+        updateStatusIcon()
+    }
+
+    private func updateStatusIcon() {
+        let isActive = isActiveModeRunning || isClickModeRunning
+        let icon = isActive ? Self.activeIcon : Self.idleIcon
+        statusItem?.button?.image = NSImage(systemSymbolName: icon, accessibilityDescription: isActive ? "Active" : "Explain")
+    }
+
+    // MARK: - Click to explain
+
+    @objc private func toggleClickMode() {
+        if isClickModeRunning {
+            stopClickMode()
+        } else {
+            startClickMode()
+        }
+    }
+
+    /// Prompts for which screen/region to watch (same picker Active Mode
+    /// uses), then arms a global Option+Click monitor. Each qualifying click
+    /// captures that region and explains/translates it — the click's exact
+    /// position only decides where the result panel appears, not what's
+    /// captured, so it works the same regardless of what's under the cursor
+    /// (a native button, a webpage, anything).
+    private func startClickMode() {
+        guard let apiKey = Keychain.loadAPIKey(), !apiKey.isEmpty else {
+            promptForAPIKey()
+            return
+        }
+        guard Settings.mode != .translateAudio else {
+            showError(ClickModeError.audioModeNotSupported)
+            return
+        }
+
+        RegionSelector.choose { [weak self] region in
+            guard let self, let region else { return }
+            self.clickModeRegion = region
+            self.isClickModeRunning = true
+            self.updateStatusIcon()
+            self.setUpClickModeMonitor()
+        }
+    }
+
+    private func stopClickMode() {
+        isClickModeRunning = false
+        clickModeRegion = nil
+        if let clickModeMonitor {
+            NSEvent.removeMonitor(clickModeMonitor)
+        }
+        clickModeMonitor = nil
+        updateStatusIcon()
+    }
+
+    private func setUpClickModeMonitor() {
+        clickModeMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            guard event.modifierFlags.contains(.option) else { return }
+            self?.handleClickModeTrigger(at: NSEvent.mouseLocation)
+        }
+    }
+
+    private func handleClickModeTrigger(at point: NSPoint) {
+        guard isClickModeRunning, !isClickCapturing, let region = clickModeRegion else { return }
+        guard let apiKey = Keychain.loadAPIKey(), !apiKey.isEmpty else {
+            stopClickMode()
+            return
+        }
+        isClickCapturing = true
+
+        Task {
+            let imageData = await CaptureManager.captureFullScreen(region: region)
+            await MainActor.run {
+                self.isClickCapturing = false
+                guard let imageData else { return }
+                self.runOneShot(imageData: imageData, apiKey: apiKey, near: point)
+            }
+        }
     }
 
     /// Manually flushes whatever audio has buffered since the last chunk —
