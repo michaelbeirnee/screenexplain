@@ -9,6 +9,7 @@ enum Settings {
     private static let remoteServerEnabledKey = "remoteServerEnabled"
     private static let micCaptureDisabledKey = "micCaptureDisabled"
     private static let hidePanelOnExplainNowKey = "hidePanelOnExplainNow"
+    private static let modelKey = "geminiModel"
 
     static var mode: AppMode {
         get { AppMode(rawValue: defaults.string(forKey: modeKey) ?? "") ?? .explain }
@@ -64,5 +65,12 @@ enum Settings {
     static var showPanelOnExplainNow: Bool {
         get { !defaults.bool(forKey: hidePanelOnExplainNowKey) }
         set { defaults.set(!newValue, forKey: hidePanelOnExplainNowKey) }
+    }
+
+    /// Which Gemini model to request. GeminiClient automatically falls back
+    /// to a cheaper model on a 429 without changing this setting.
+    static var model: GeminiModel {
+        get { GeminiModel(rawValue: defaults.string(forKey: modelKey) ?? "") ?? .flash }
+        set { defaults.set(newValue.rawValue, forKey: modelKey) }
     }
 }

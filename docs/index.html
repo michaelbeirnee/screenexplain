@@ -211,6 +211,10 @@
         <select id="modeSelect"></select>
       </div>
       <div>
+        <label for="modelSelect">Model</label>
+        <select id="modelSelect"></select>
+      </div>
+      <div>
         <label for="intervalSelect">Interval</label>
         <select id="intervalSelect">
           <option value="3">Every 3s</option>
@@ -277,6 +281,7 @@
   const noRegionHint = document.getElementById('noRegionHint');
   const pushAudioButton = document.getElementById('pushAudioButton');
   const modeSelect = document.getElementById('modeSelect');
+  const modelSelect = document.getElementById('modelSelect');
   const intervalSelect = document.getElementById('intervalSelect');
   const manualPushSelect = document.getElementById('manualPushSelect');
   const micSelect = document.getElementById('micSelect');
@@ -349,7 +354,23 @@
       modeSelect.dataset.filled = '1';
     }
 
+    if (modelSelect.dataset.filled !== '1') {
+      const labels = {
+        'gemini-flash-lite-latest': 'Flash Lite (fastest, cheapest)',
+        'gemini-flash-latest': 'Flash (balanced, default)',
+        'gemini-pro-latest': 'Pro (most capable, slower)'
+      };
+      status.availableModels.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = labels[m] || m;
+        modelSelect.appendChild(opt);
+      });
+      modelSelect.dataset.filled = '1';
+    }
+
     modeSelect.value = status.mode;
+    modelSelect.value = status.model;
     intervalSelect.value = String(Math.round(status.interval));
     manualPushSelect.value = String(status.manualPushEnabled);
     micSelect.value = String(status.micEnabled);
@@ -455,6 +476,13 @@
   modeSelect.addEventListener('change', async () => {
     try {
       const status = await api('/api/mode', { method: 'POST', body: JSON.stringify({ mode: modeSelect.value }) });
+      applyStatus(status);
+    } catch (err) { showError(err.message); }
+  });
+
+  modelSelect.addEventListener('change', async () => {
+    try {
+      const status = await api('/api/model', { method: 'POST', body: JSON.stringify({ model: modelSelect.value }) });
       applyStatus(status);
     } catch (err) { showError(err.message); }
   });

@@ -15,8 +15,6 @@ enum GeminiClientError: LocalizedError {
 }
 
 enum GeminiClient {
-    private static let model = "gemini-flash-latest"
-
     private static let explainSystemPrompt = """
     You are helping someone understand a textbook page, diagram, or screen \
     they just captured while reading. Explain clearly and concisely what is \
@@ -54,25 +52,27 @@ enum GeminiClient {
     about it.
     """
 
-    static func explainImage(pngData: Data, apiKey: String, onDelta: @escaping (String) -> Void) async throws {
+    static func explainImage(pngData: Data, model: GeminiModel, apiKey: String, onDelta: @escaping (String) -> Void) async throws {
         try await stream(
             parts: [
                 ["inline_data": ["mime_type": "image/png", "data": pngData.base64EncodedString()]],
                 ["text": "Explain what's shown in this image."]
             ],
             systemPrompt: explainSystemPrompt,
+            model: model,
             apiKey: apiKey,
             onDelta: onDelta
         )
     }
 
-    static func translateImage(pngData: Data, targetLanguage: String, apiKey: String, onDelta: @escaping (String) -> Void) async throws {
+    static func translateImage(pngData: Data, targetLanguage: String, model: GeminiModel, apiKey: String, onDelta: @escaping (String) -> Void) async throws {
         try await stream(
             parts: [
                 ["inline_data": ["mime_type": "image/png", "data": pngData.base64EncodedString()]],
                 ["text": "Translate all text visible in this image into \(targetLanguage)."]
             ],
             systemPrompt: translateImageSystemPrompt,
+            model: model,
             apiKey: apiKey,
             onDelta: onDelta
         )
@@ -81,7 +81,7 @@ enum GeminiClient {
     /// Either audio track may be omitted, but at least one must be present.
     /// Passing both lets the model tell "you talking" apart from "audio
     /// playing from the call" by source rather than guessing from voice alone.
-    static func translateAudio(micAudio: Data?, systemAudio: Data?, targetLanguage: String, previousContext: String?, apiKey: String, onDelta: @escaping (String) -> Void) async throws {
+    static func translateAudio(micAudio: Data?, systemAudio: Data?, targetLanguage: String, previousContext: String?, model: GeminiModel, apiKey: String, onDelta: @escaping (String) -> Void) async throws {
         var parts: [[String: Any]] = []
 
         if let micAudio {
@@ -110,18 +110,35 @@ enum GeminiClient {
         try await stream(
             parts: parts,
             systemPrompt: translateAudioSystemPrompt,
+            model: model,
             apiKey: apiKey,
             onDelta: onDelta
         )
     }
 
-    private static func stream(parts: [[String: Any]], systemPrompt: String, apiKey: String, onDelta: @escaping (String) -> Void) async throws {
+    /// On a 429 (rate limit), automatically retries once with the model's
+    /// fallback (a cheaper, higher-quota model) before giving up — the
+    /// request hasn't streamed any partial output yet at that point, since
+    /// the status code is checked before reading any response lines.
+    private static func stream(parts: [[String: Any]], systemPrompt: String, model: GeminiModel, apiKey: String, onDelta: @escaping (String) -> Void) async throws {
+        do {
+            try await performRequest(parts: parts, systemPrompt: systemPrompt, model: model, apiKey: apiKey, onDelta: onDelta)
+        } catch let error as GeminiClientError {
+            if case .badResponse(let status, _) = error, status == 429, let fallback = model.rateLimitFallback {
+                try await stream(parts: parts, systemPrompt: systemPrompt, model: fallback, apiKey: apiKey, onDelta: onDelta)
+            } else {
+                throw error
+            }
+        }
+    }
+
+    private static func performRequest(parts: [[String: Any]], systemPrompt: String, model: GeminiModel, apiKey: String, onDelta: @escaping (String) -> Void) async throws {
         let body: [String: Any] = [
             "contents": [["role": "user", "parts": parts]],
             "systemInstruction": ["parts": [["text": systemPrompt]]]
         ]
 
-        var components = URLComponents(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model):streamGenerateContent")!
+        var components = URLComponents(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model.rawValue):streamGenerateContent")!
         components.queryItems = [
             URLQueryItem(name: "alt", value: "sse"),
             URLQueryItem(name: "key", value: apiKey)

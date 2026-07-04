@@ -102,6 +102,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.setSubmenu(modeMenu, for: modeItem)
         menu.addItem(modeItem)
 
+        let modelMenu = NSMenu()
+        for model in GeminiModel.allCases {
+            let item = NSMenuItem(title: model.displayName, action: #selector(setModel(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = model
+            modelMenu.addItem(item)
+        }
+        let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
+        menu.setSubmenu(modelMenu, for: modelItem)
+        menu.addItem(modelItem)
+
         menu.addItem(withTitle: "Target Language…", action: #selector(promptForTargetLanguage), keyEquivalent: "")
         menu.addItem(.separator())
 
@@ -133,6 +144,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 item.state = (mode == Settings.mode) ? .on : .off
             } else if let seconds = item.representedObject as? Double {
                 item.state = (seconds == Settings.activeModeInterval) ? .on : .off
+            } else if let model = item.representedObject as? GeminiModel {
+                item.state = (model == Settings.model) ? .on : .off
             }
             if item.title == "Active Mode" {
                 item.state = isActiveModeRunning ? .on : .off
@@ -191,6 +204,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func setMode(_ sender: NSMenuItem) {
         guard let mode = sender.representedObject as? AppMode else { return }
         applyMode(mode)
+    }
+
+    @objc private func setModel(_ sender: NSMenuItem) {
+        guard let model = sender.representedObject as? GeminiModel else { return }
+        Settings.model = model
     }
 
     @objc private func setInterval(_ sender: NSMenuItem) {
@@ -338,9 +356,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
                 switch Settings.mode {
                 case .translateScreen:
-                    try await GeminiClient.translateImage(pngData: imageData, targetLanguage: Settings.targetLanguage, apiKey: apiKey, onDelta: onDelta)
+                    try await GeminiClient.translateImage(pngData: imageData, targetLanguage: Settings.targetLanguage, model: Settings.model, apiKey: apiKey, onDelta: onDelta)
                 case .explain, .translateAudio:
-                    try await GeminiClient.explainImage(pngData: imageData, apiKey: apiKey, onDelta: onDelta)
+                    try await GeminiClient.explainImage(pngData: imageData, model: Settings.model, apiKey: apiKey, onDelta: onDelta)
                 }
             } catch {
                 await MainActor.run {
@@ -611,9 +629,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
                 switch Settings.mode {
                 case .translateScreen:
-                    try await GeminiClient.translateImage(pngData: imageData, targetLanguage: Settings.targetLanguage, apiKey: apiKey, onDelta: onDelta)
+                    try await GeminiClient.translateImage(pngData: imageData, targetLanguage: Settings.targetLanguage, model: Settings.model, apiKey: apiKey, onDelta: onDelta)
                 case .explain:
-                    try await GeminiClient.explainImage(pngData: imageData, apiKey: apiKey, onDelta: onDelta)
+                    try await GeminiClient.explainImage(pngData: imageData, model: Settings.model, apiKey: apiKey, onDelta: onDelta)
                 case .translateAudio:
                     break
                 }
@@ -636,7 +654,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             do {
                 var isFirstDeltaOfChunk = true
                 var fullText = ""
-                try await GeminiClient.translateAudio(micAudio: micAudio, systemAudio: systemAudio, targetLanguage: Settings.targetLanguage, previousContext: contextForThisChunk, apiKey: apiKey) { chunk in
+                try await GeminiClient.translateAudio(micAudio: micAudio, systemAudio: systemAudio, targetLanguage: Settings.targetLanguage, previousContext: contextForThisChunk, model: Settings.model, apiKey: apiKey) { chunk in
                     fullText += chunk
                     DispatchQueue.main.async {
                         if isFirstDeltaOfChunk {
@@ -741,6 +759,8 @@ extension AppDelegate: RemoteServerDelegate {
             hasSelectedRegion: selectedRegion != nil,
             mode: Settings.mode.rawValue,
             availableModes: AppMode.allCases.map(\.rawValue),
+            model: Settings.model.rawValue,
+            availableModels: GeminiModel.allCases.map(\.rawValue),
             targetLanguage: Settings.targetLanguage,
             interval: Settings.activeModeInterval,
             manualPushEnabled: Settings.audioManualPushEnabled,
@@ -761,6 +781,10 @@ extension AppDelegate: RemoteServerDelegate {
 
     func remoteSetMode(_ mode: AppMode) {
         applyMode(mode)
+    }
+
+    func remoteSetModel(_ model: GeminiModel) {
+        Settings.model = model
     }
 
     func remoteSetTargetLanguage(_ language: String) {

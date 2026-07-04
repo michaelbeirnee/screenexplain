@@ -6,6 +6,7 @@ protocol RemoteServerDelegate: AnyObject {
     func remoteToggleActiveMode()
     func remoteToggleClickMode()
     func remoteSetMode(_ mode: AppMode)
+    func remoteSetModel(_ model: GeminiModel)
     func remoteSetTargetLanguage(_ language: String)
     func remoteSetInterval(_ seconds: Double)
     func remoteSetManualPush(_ enabled: Bool)
@@ -24,6 +25,8 @@ struct RemoteStatus: Codable {
     var hasSelectedRegion: Bool
     var mode: String
     var availableModes: [String]
+    var model: String
+    var availableModels: [String]
     var targetLanguage: String
     var interval: Double
     var manualPushEnabled: Bool
@@ -122,6 +125,14 @@ final class RemoteServer: @unchecked Sendable {
                 return Self.json(.badRequest, ["error": "invalid mode"])
             }
             await MainActor.run { delegate.remoteSetMode(mode) }
+            let status = await MainActor.run { delegate.remoteStatus() }
+            return Self.json(.ok, status)
+
+        case (.POST, "/api/model"):
+            guard let raw: String = await field(request, "model"), let model = GeminiModel(rawValue: raw) else {
+                return Self.json(.badRequest, ["error": "invalid model"])
+            }
+            await MainActor.run { delegate.remoteSetModel(model) }
             let status = await MainActor.run { delegate.remoteStatus() }
             return Self.json(.ok, status)
 
