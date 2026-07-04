@@ -191,9 +191,13 @@
 
     <div class="row" style="margin-bottom: 16px;">
       <button id="toggleActiveButton">Toggle Active Mode</button>
+      <button id="toggleClickButton">Toggle Click to Explain</button>
       <button id="pushAudioButton" class="secondary">Push Audio Now</button>
       <button id="disconnectButton" class="secondary" style="margin-left: auto;">Change Server…</button>
     </div>
+    <p class="subtitle" id="clickModeHint" style="display: none; margin-top: -10px;">
+      Armed — a selection overlay will appear on the Mac's screen; someone needs to be at the machine to drag out the region.
+    </p>
 
     <div class="grid">
       <div>
@@ -254,6 +258,8 @@
   const connDot = document.getElementById('connDot');
   const connLabel = document.getElementById('connLabel');
   const toggleActiveButton = document.getElementById('toggleActiveButton');
+  const toggleClickButton = document.getElementById('toggleClickButton');
+  const clickModeHint = document.getElementById('clickModeHint');
   const pushAudioButton = document.getElementById('pushAudioButton');
   const modeSelect = document.getElementById('modeSelect');
   const intervalSelect = document.getElementById('intervalSelect');
@@ -304,8 +310,13 @@
 
   function applyStatus(status) {
     connDot.className = 'dot on';
-    connLabel.textContent = status.activeModeRunning ? 'Connected — Active Mode running' : 'Connected — idle';
+    const running = status.activeModeRunning
+      ? 'Active Mode running'
+      : (status.clickModeRunning ? 'Click to Explain armed' : 'idle');
+    connLabel.textContent = 'Connected — ' + running;
     toggleActiveButton.textContent = status.activeModeRunning ? 'Stop Active Mode' : 'Start Active Mode';
+    toggleClickButton.textContent = status.clickModeRunning ? 'Stop Click to Explain' : 'Start Click to Explain';
+    clickModeHint.style.display = status.clickModeRunning ? 'block' : 'none';
 
     if (modeSelect.dataset.filled !== '1') {
       const labels = { explain: 'Explain', translateScreen: 'Translate Screen Text', translateAudio: 'Translate Audio (Live)' };
@@ -393,6 +404,13 @@
   toggleActiveButton.addEventListener('click', async () => {
     try {
       const status = await api('/api/toggle-active-mode', { method: 'POST' });
+      applyStatus(status);
+    } catch (err) { showError(err.message); }
+  });
+
+  toggleClickButton.addEventListener('click', async () => {
+    try {
+      const status = await api('/api/toggle-click-mode', { method: 'POST' });
       applyStatus(status);
     } catch (err) { showError(err.message); }
   });

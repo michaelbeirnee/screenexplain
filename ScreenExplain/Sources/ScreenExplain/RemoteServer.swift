@@ -4,6 +4,7 @@ import FlyingFox
 protocol RemoteServerDelegate: AnyObject {
     func remoteStatus() -> RemoteStatus
     func remoteToggleActiveMode()
+    func remoteToggleClickMode()
     func remoteSetMode(_ mode: AppMode)
     func remoteSetTargetLanguage(_ language: String)
     func remoteSetInterval(_ seconds: Double)
@@ -14,6 +15,7 @@ protocol RemoteServerDelegate: AnyObject {
 
 struct RemoteStatus: Codable {
     var activeModeRunning: Bool
+    var clickModeRunning: Bool
     var mode: String
     var availableModes: [String]
     var targetLanguage: String
@@ -100,6 +102,11 @@ final class RemoteServer: @unchecked Sendable {
 
         case (.POST, "/api/toggle-active-mode"):
             await MainActor.run { delegate.remoteToggleActiveMode() }
+            let status = await MainActor.run { delegate.remoteStatus() }
+            return Self.json(.ok, status)
+
+        case (.POST, "/api/toggle-click-mode"):
+            await MainActor.run { delegate.remoteToggleClickMode() }
             let status = await MainActor.run { delegate.remoteStatus() }
             return Self.json(.ok, status)
 

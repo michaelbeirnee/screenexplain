@@ -693,6 +693,7 @@ extension AppDelegate: RemoteServerDelegate {
     func remoteStatus() -> RemoteStatus {
         RemoteStatus(
             activeModeRunning: isActiveModeRunning,
+            clickModeRunning: isClickModeRunning,
             mode: Settings.mode.rawValue,
             availableModes: AppMode.allCases.map(\.rawValue),
             targetLanguage: Settings.targetLanguage,
@@ -706,6 +707,10 @@ extension AppDelegate: RemoteServerDelegate {
 
     func remoteToggleActiveMode() {
         toggleActiveMode()
+    }
+
+    func remoteToggleClickMode() {
+        toggleClickMode()
     }
 
     func remoteSetMode(_ mode: AppMode) {
