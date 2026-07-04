@@ -14,29 +14,28 @@ enum AudioCaptureError: LocalizedError {
     }
 }
 
-/// Captures system audio (whatever is playing on screen) via ScreenCaptureKit
-/// and hands off fixed-length WAV chunks so they can be sent for live translation.
+/// Captures system audio (whatever is playing on screen — e.g. the other
+/// side of a Zoom call) via ScreenCaptureKit. Buffers continuously; callers
+/// pull WAV chunks out with flush() on whatever cadence they want (a timer,
+/// a manual push, or paired with MicrophoneCapture for the same instant).
 /// Requires Screen Recording permission for this app in System Settings.
-final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
+final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     static let shared = AudioCapture()
 
-    /// Above this many buffered bytes we auto-flush even in manual-push mode,
-    /// so a forgotten push can't grow memory/cost unboundedly (~100s of audio).
+    /// Above this many buffered bytes we drop the oldest audio, so a long
+    /// gap between flushes can't grow memory unboundedly (~100s of audio).
     private static let maxBufferedBytes = 20_000_000
 
     private var stream: SCStream?
-    private var chunkTimer: Timer?
     private let queue = DispatchQueue(label: "com.local.screenexplain.audiocapture")
     private var pcmBuffer = Data()
     private var sampleRate: Double = 48000
     private var channels: UInt32 = 2
-    private var onChunk: ((Data) -> Void)?
     private var onStreamError: ((Error) -> Void)?
 
-    /// When manualPushOnly is true, no timer is scheduled — audio keeps
-    /// buffering until flushNow() is called (or the safety cap is hit).
-    func start(chunkInterval: TimeInterval, manualPushOnly: Bool, onChunk: @escaping (Data) -> Void, onStreamError: @escaping (Error) -> Void) async throws {
-        self.onChunk = onChunk
+    private override init() {}
+
+    func start(onStreamError: @escaping (Error) -> Void) async throws {
         self.onStreamError = onStreamError
 
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
@@ -54,31 +53,30 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
         try await stream.startCapture()
         self.stream = stream
-
-        guard !manualPushOnly else { return }
-
-        let timer = Timer.scheduledTimer(withTimeInterval: chunkInterval, repeats: true) { [weak self] _ in
-            self?.flushChunk()
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        chunkTimer = timer
-    }
-
-    /// Immediately sends whatever audio has buffered since the last flush.
-    /// Used for the manual-push hotkey/menu item.
-    func flushNow() {
-        flushChunk()
     }
 
     func stop() {
-        chunkTimer?.invalidate()
-        chunkTimer = nil
-        onChunk = nil
         onStreamError = nil
         let activeStream = stream
         stream = nil
         queue.async { [weak self] in self?.pcmBuffer.removeAll() }
         Task { try? await activeStream?.stopCapture() }
+    }
+
+    /// Returns whatever audio has buffered since the last flush as a WAV
+    /// blob, or nil if nothing (or only silence) has been captured.
+    func flush() async -> Data? {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                guard !self.pcmBuffer.isEmpty else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let wav = WAVEncoder.wrap(pcm: self.pcmBuffer, sampleRate: self.sampleRate, channels: self.channels)
+                self.pcmBuffer.removeAll()
+                continuation.resume(returning: wav)
+            }
+        }
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -104,7 +102,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             self.channels = channels
             self.pcmBuffer.append(Self.convertFloat32ToInt16(floatData))
             if self.pcmBuffer.count > Self.maxBufferedBytes {
-                self.flushChunk()
+                self.pcmBuffer.removeFirst(self.pcmBuffer.count - Self.maxBufferedBytes)
             }
         }
     }
@@ -125,42 +123,5 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
             }
         }
         return output
-    }
-
-    private func flushChunk() {
-        queue.async { [weak self] in
-            guard let self, !self.pcmBuffer.isEmpty else { return }
-            let wav = Self.wrapWAV(pcm: self.pcmBuffer, sampleRate: self.sampleRate, channels: self.channels)
-            self.pcmBuffer.removeAll()
-            DispatchQueue.main.async { self.onChunk?(wav) }
-        }
-    }
-
-    private static func wrapWAV(pcm: Data, sampleRate: Double, channels: UInt32) -> Data {
-        let byteRate = UInt32(sampleRate) * channels * 2
-        let blockAlign = UInt16(channels * 2)
-        let dataSize = UInt32(pcm.count)
-        let chunkSize = 36 + dataSize
-
-        var header = Data()
-        header.append(contentsOf: "RIFF".utf8)
-        header.append(contentsOf: littleEndianBytes(of: chunkSize))
-        header.append(contentsOf: "WAVE".utf8)
-        header.append(contentsOf: "fmt ".utf8)
-        header.append(contentsOf: littleEndianBytes(of: UInt32(16)))
-        header.append(contentsOf: littleEndianBytes(of: UInt16(1))) // PCM
-        header.append(contentsOf: littleEndianBytes(of: UInt16(channels)))
-        header.append(contentsOf: littleEndianBytes(of: UInt32(sampleRate)))
-        header.append(contentsOf: littleEndianBytes(of: byteRate))
-        header.append(contentsOf: littleEndianBytes(of: blockAlign))
-        header.append(contentsOf: littleEndianBytes(of: UInt16(16)))
-        header.append(contentsOf: "data".utf8)
-        header.append(contentsOf: littleEndianBytes(of: dataSize))
-
-        return header + pcm
-    }
-
-    private static func littleEndianBytes<T: FixedWidthInteger>(of value: T) -> [UInt8] {
-        withUnsafeBytes(of: value.littleEndian) { Array($0) }
     }
 }

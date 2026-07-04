@@ -4,23 +4,22 @@ import FlyingFox
 protocol RemoteServerDelegate: AnyObject {
     func remoteStatus() -> RemoteStatus
     func remoteToggleActiveMode()
-    func remoteSetProvider(_ provider: AIProvider)
     func remoteSetMode(_ mode: AppMode)
     func remoteSetTargetLanguage(_ language: String)
     func remoteSetInterval(_ seconds: Double)
     func remoteSetManualPush(_ enabled: Bool)
+    func remoteSetMicEnabled(_ enabled: Bool)
     func remotePushAudioNow()
 }
 
 struct RemoteStatus: Codable {
     var activeModeRunning: Bool
-    var provider: String
-    var availableProviders: [String]
     var mode: String
     var availableModes: [String]
     var targetLanguage: String
     var interval: Double
     var manualPushEnabled: Bool
+    var micEnabled: Bool
     var panelTitle: String
     var transcript: String
 }
@@ -57,7 +56,9 @@ final class RemoteServer: @unchecked Sendable {
     func start() throws {
         guard server == nil else { throw RemoteServerError.alreadyRunning }
 
-        let server = HTTPServer(address: .loopback(port: Self.port), handler: RemoteHTTPHandler(owner: self))
+        // IPv4 loopback specifically (FlyingFox's .loopback helper is IPv6-only)
+        // since tunnels like Tailscale Funnel proxy to 127.0.0.1, not [::1].
+        let server = try HTTPServer(address: .inet(ip4: "127.0.0.1", port: Self.port), handler: RemoteHTTPHandler(owner: self))
         self.server = server
 
         Task { try? await server.run() }
@@ -102,14 +103,6 @@ final class RemoteServer: @unchecked Sendable {
             let status = await MainActor.run { delegate.remoteStatus() }
             return Self.json(.ok, status)
 
-        case (.POST, "/api/provider"):
-            guard let raw: String = await field(request, "provider"), let provider = AIProvider(rawValue: raw) else {
-                return Self.json(.badRequest, ["error": "invalid provider"])
-            }
-            await MainActor.run { delegate.remoteSetProvider(provider) }
-            let status = await MainActor.run { delegate.remoteStatus() }
-            return Self.json(.ok, status)
-
         case (.POST, "/api/mode"):
             guard let raw: String = await field(request, "mode"), let mode = AppMode(rawValue: raw) else {
                 return Self.json(.badRequest, ["error": "invalid mode"])
@@ -139,6 +132,14 @@ final class RemoteServer: @unchecked Sendable {
                 return Self.json(.badRequest, ["error": "invalid value"])
             }
             await MainActor.run { delegate.remoteSetManualPush(enabled) }
+            let status = await MainActor.run { delegate.remoteStatus() }
+            return Self.json(.ok, status)
+
+        case (.POST, "/api/mic-enabled"):
+            guard let enabled: Bool = await field(request, "enabled") else {
+                return Self.json(.badRequest, ["error": "invalid value"])
+            }
+            await MainActor.run { delegate.remoteSetMicEnabled(enabled) }
             let status = await MainActor.run { delegate.remoteStatus() }
             return Self.json(.ok, status)
 

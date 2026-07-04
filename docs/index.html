@@ -197,10 +197,6 @@
 
     <div class="grid">
       <div>
-        <label for="providerSelect">Provider</label>
-        <select id="providerSelect"></select>
-      </div>
-      <div>
         <label for="modeSelect">Mode</label>
         <select id="modeSelect"></select>
       </div>
@@ -218,6 +214,13 @@
         <select id="manualPushSelect">
           <option value="false">Automatic (timer)</option>
           <option value="true">Manual push only</option>
+        </select>
+      </div>
+      <div>
+        <label for="micSelect">Microphone (Audio Mode)</label>
+        <select id="micSelect">
+          <option value="true">Included</option>
+          <option value="false">Excluded</option>
         </select>
       </div>
     </div>
@@ -252,10 +255,10 @@
   const connLabel = document.getElementById('connLabel');
   const toggleActiveButton = document.getElementById('toggleActiveButton');
   const pushAudioButton = document.getElementById('pushAudioButton');
-  const providerSelect = document.getElementById('providerSelect');
   const modeSelect = document.getElementById('modeSelect');
   const intervalSelect = document.getElementById('intervalSelect');
   const manualPushSelect = document.getElementById('manualPushSelect');
+  const micSelect = document.getElementById('micSelect');
   const languageInput = document.getElementById('languageInput');
   const languageButton = document.getElementById('languageButton');
   const transcript = document.getElementById('transcript');
@@ -304,15 +307,6 @@
     connLabel.textContent = status.activeModeRunning ? 'Connected — Active Mode running' : 'Connected — idle';
     toggleActiveButton.textContent = status.activeModeRunning ? 'Stop Active Mode' : 'Start Active Mode';
 
-    if (providerSelect.dataset.filled !== '1') {
-      status.availableProviders.forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p;
-        opt.textContent = p[0].toUpperCase() + p.slice(1);
-        providerSelect.appendChild(opt);
-      });
-      providerSelect.dataset.filled = '1';
-    }
     if (modeSelect.dataset.filled !== '1') {
       const labels = { explain: 'Explain', translateScreen: 'Translate Screen Text', translateAudio: 'Translate Audio (Live)' };
       status.availableModes.forEach(m => {
@@ -324,10 +318,10 @@
       modeSelect.dataset.filled = '1';
     }
 
-    providerSelect.value = status.provider;
     modeSelect.value = status.mode;
     intervalSelect.value = String(Math.round(status.interval));
     manualPushSelect.value = String(status.manualPushEnabled);
+    micSelect.value = String(status.micEnabled);
     if (!editingLanguage) languageInput.value = status.targetLanguage;
 
     transcript.textContent = status.transcript || '';
@@ -409,13 +403,6 @@
     } catch (err) { showError(err.message); }
   });
 
-  providerSelect.addEventListener('change', async () => {
-    try {
-      const status = await api('/api/provider', { method: 'POST', body: JSON.stringify({ provider: providerSelect.value }) });
-      applyStatus(status);
-    } catch (err) { showError(err.message); }
-  });
-
   modeSelect.addEventListener('change', async () => {
     try {
       const status = await api('/api/mode', { method: 'POST', body: JSON.stringify({ mode: modeSelect.value }) });
@@ -433,6 +420,13 @@
   manualPushSelect.addEventListener('change', async () => {
     try {
       const status = await api('/api/manual-push', { method: 'POST', body: JSON.stringify({ enabled: manualPushSelect.value === 'true' }) });
+      applyStatus(status);
+    } catch (err) { showError(err.message); }
+  });
+
+  micSelect.addEventListener('change', async () => {
+    try {
+      const status = await api('/api/mic-enabled', { method: 'POST', body: JSON.stringify({ enabled: micSelect.value === 'true' }) });
       applyStatus(status);
     } catch (err) { showError(err.message); }
   });

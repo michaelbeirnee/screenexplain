@@ -10,6 +10,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isActiveModeRunning = false
     private var lastAudioTranscript = ""
     private var audioPanelStarted = false
+    /// Screen + rect chosen via RegionSelector for this active-mode session.
+    /// Persists across in-place restarts (e.g. changing the interval) so
+    /// those don't re-prompt; only a fresh Active Mode toggle-on does.
+    private var activeModeRegion: SelectedRegion?
 
     private static let idleIcon = "text.viewfinder"
     private static let activeIcon = "eye.fill"
@@ -60,18 +64,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         manualPushItem.target = self
         menu.addItem(manualPushItem)
         menu.addItem(withTitle: "Push Audio Now (⌘⇧T)", action: #selector(pushAudioNow), keyEquivalent: "")
-        menu.addItem(.separator())
 
-        let providerMenu = NSMenu()
-        for provider in AIProvider.allCases {
-            let item = NSMenuItem(title: provider.displayName, action: #selector(setProvider(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = provider
-            providerMenu.addItem(item)
-        }
-        let providerItem = NSMenuItem(title: "Provider", action: nil, keyEquivalent: "")
-        menu.setSubmenu(providerMenu, for: providerItem)
-        menu.addItem(providerItem)
+        let micItem = NSMenuItem(title: "Include Microphone (Audio Mode)", action: #selector(toggleMicCapture), keyEquivalent: "")
+        micItem.target = self
+        menu.addItem(micItem)
+        menu.addItem(.separator())
 
         let modeMenu = NSMenu()
         for mode in AppMode.allCases {
@@ -87,8 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(withTitle: "Target Language…", action: #selector(promptForTargetLanguage), keyEquivalent: "")
         menu.addItem(.separator())
 
-        menu.addItem(withTitle: "Set Claude API Key…", action: #selector(promptForClaudeKey), keyEquivalent: "")
-        menu.addItem(withTitle: "Set Gemini API Key…", action: #selector(promptForGeminiKey), keyEquivalent: "")
+        menu.addItem(withTitle: "Set Gemini API Key…", action: #selector(promptForAPIKey), keyEquivalent: "")
         menu.addItem(.separator())
 
         let remoteServerItem = NSMenuItem(title: "Remote Access Server", action: #selector(toggleRemoteServer), keyEquivalent: "")
@@ -108,9 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         for item in menu.items {
-            if let provider = item.representedObject as? AIProvider {
-                item.state = (provider == Settings.provider) ? .on : .off
-            } else if let mode = item.representedObject as? AppMode {
+            if let mode = item.representedObject as? AppMode {
                 item.state = (mode == Settings.mode) ? .on : .off
             } else if let seconds = item.representedObject as? Double {
                 item.state = (seconds == Settings.activeModeInterval) ? .on : .off
@@ -120,6 +114,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             if item.title == "Manual Push (Audio)" {
                 item.state = Settings.audioManualPushEnabled ? .on : .off
+            }
+            if item.title == "Include Microphone (Audio Mode)" {
+                item.state = Settings.micCaptureEnabled ? .on : .off
             }
         }
 
@@ -139,13 +136,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Settings.audioManualPushEnabled = enabled
         if isActiveModeRunning && Settings.mode == .translateAudio {
             stopActiveMode()
-            startActiveMode()
+            restartActiveModeKeepingRegion()
         }
     }
 
-    @objc private func setProvider(_ sender: NSMenuItem) {
-        guard let provider = sender.representedObject as? AIProvider else { return }
-        applyProvider(provider)
+    @objc private func toggleMicCapture() {
+        applyMicCapture(!Settings.micCaptureEnabled)
+    }
+
+    private func applyMicCapture(_ enabled: Bool) {
+        guard Settings.micCaptureEnabled != enabled else { return }
+        Settings.micCaptureEnabled = enabled
+        if isActiveModeRunning && Settings.mode == .translateAudio {
+            stopActiveMode()
+            restartActiveModeKeepingRegion()
+        }
     }
 
     @objc private func setMode(_ sender: NSMenuItem) {
@@ -158,12 +163,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         applyInterval(seconds)
     }
 
-    /// Active-mode ticks re-read Settings.provider on every cycle, so changing
-    /// it (locally or remotely) takes effect on the next tick without a restart.
-    private func applyProvider(_ provider: AIProvider) {
-        Settings.provider = provider
-    }
-
     /// Mode changes always require a restart since screen polling and audio
     /// streaming use entirely different capture pipelines.
     private func applyMode(_ mode: AppMode) {
@@ -174,11 +173,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Interval changes shouldn't force the user to re-pick a screen region,
+    /// so this restarts in place using whatever region is already active
+    /// (region selection only happens on a fresh Active Mode toggle-on).
     private func applyInterval(_ seconds: Double) {
         Settings.activeModeInterval = seconds
         if isActiveModeRunning {
             stopActiveMode()
-            startActiveMode()
+            restartActiveModeKeepingRegion()
         }
     }
 
@@ -252,9 +254,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func triggerCapture() {
         guard !isCapturing else { return }
-        let provider = Settings.provider
-        guard let apiKey = Keychain.loadAPIKey(for: provider), !apiKey.isEmpty else {
-            promptForAPIKey(provider: provider)
+        guard let apiKey = Keychain.loadAPIKey(), !apiKey.isEmpty else {
+            promptForAPIKey()
             return
         }
         isCapturing = true
@@ -266,12 +267,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DispatchQueue.main.async {
                 self?.isCapturing = false
                 guard let imageData else { return }
-                self?.runOneShot(imageData: imageData, provider: provider, apiKey: apiKey, near: mouseLocation)
+                self?.runOneShot(imageData: imageData, apiKey: apiKey, near: mouseLocation)
             }
         }
     }
 
-    private func runOneShot(imageData: Data, provider: AIProvider, apiKey: String, near point: NSPoint) {
+    private func runOneShot(imageData: Data, apiKey: String, near point: NSPoint) {
         let panel = ResultPanel.shared ?? ResultPanel()
         ResultPanel.shared = panel
         panel.title = Settings.mode == .translateScreen ? "Translate" : "Explain"
@@ -293,9 +294,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
                 switch Settings.mode {
                 case .translateScreen:
-                    try await AIClient.translateImage(pngData: imageData, provider: provider, targetLanguage: Settings.targetLanguage, apiKey: apiKey, onDelta: onDelta)
+                    try await GeminiClient.translateImage(pngData: imageData, targetLanguage: Settings.targetLanguage, apiKey: apiKey, onDelta: onDelta)
                 case .explain, .translateAudio:
-                    try await AIClient.explainImage(pngData: imageData, provider: provider, apiKey: apiKey, onDelta: onDelta)
+                    try await GeminiClient.explainImage(pngData: imageData, apiKey: apiKey, onDelta: onDelta)
                 }
             } catch {
                 await MainActor.run {
@@ -316,13 +317,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Entry point for a fresh Active Mode toggle-on. For screen-based modes,
+    /// prompts for which monitor/region to watch (screenshot-tool style)
+    /// before starting — in-place restarts (interval changes etc.) skip this
+    /// and reuse the chosen region via restartActiveModeKeepingRegion().
     private func startActiveMode() {
-        let provider = Settings.provider
-        guard let apiKey = Keychain.loadAPIKey(for: provider), !apiKey.isEmpty else {
-            promptForAPIKey(provider: provider)
+        guard let apiKey = Keychain.loadAPIKey(), !apiKey.isEmpty else {
+            promptForAPIKey()
             return
         }
 
+        switch Settings.mode {
+        case .explain, .translateScreen:
+            RegionSelector.choose { [weak self] region in
+                guard let self, let region else { return }
+                self.activeModeRegion = region
+                self.beginActiveMode(apiKey: apiKey)
+            }
+        case .translateAudio:
+            activeModeRegion = nil
+            beginActiveMode(apiKey: apiKey)
+        }
+    }
+
+    /// Used when settings change while Active Mode is already running — reuses
+    /// whatever region was already chosen instead of prompting again.
+    private func restartActiveModeKeepingRegion() {
+        guard let apiKey = Keychain.loadAPIKey(), !apiKey.isEmpty else { return }
+        if Settings.mode != .translateAudio && activeModeRegion == nil {
+            startActiveMode()
+            return
+        }
+        beginActiveMode(apiKey: apiKey)
+    }
+
+    private func beginActiveMode(apiKey: String) {
         isActiveModeRunning = true
         statusItem?.button?.image = NSImage(systemSymbolName: Self.activeIcon, accessibilityDescription: "Active")
 
@@ -347,24 +376,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             audioPanelStarted = false
             Task {
                 do {
-                    try await AudioCapture.shared.start(
-                        chunkInterval: Settings.activeModeInterval,
-                        manualPushOnly: Settings.audioManualPushEnabled,
-                        onChunk: { [weak self] wavData in
-                            self?.processAudioChunk(wavData)
-                        },
-                        onStreamError: { [weak self] error in
-                            DispatchQueue.main.async {
-                                self?.showError(error)
-                                self?.stopActiveMode()
-                            }
+                    try await AudioCapture.shared.start(onStreamError: { [weak self] error in
+                        DispatchQueue.main.async {
+                            self?.showError(error)
+                            self?.stopActiveMode()
                         }
-                    )
+                    })
+                    if Settings.micCaptureEnabled {
+                        try MicrophoneCapture.shared.start()
+                    }
                 } catch {
                     await MainActor.run {
                         self.showError(error)
                         self.stopActiveMode()
                     }
+                    return
+                }
+
+                guard !Settings.audioManualPushEnabled else { return }
+                await MainActor.run {
+                    let timer = Timer.scheduledTimer(withTimeInterval: Settings.activeModeInterval, repeats: true) { [weak self] _ in
+                        self?.runAudioTick()
+                    }
+                    RunLoop.main.add(timer, forMode: .common)
+                    self.activeModeTimer = timer
                 }
             }
         }
@@ -375,6 +410,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         activeModeTimer?.invalidate()
         activeModeTimer = nil
         AudioCapture.shared.stop()
+        MicrophoneCapture.shared.stop()
         lastAudioTranscript = ""
         statusItem?.button?.image = NSImage(systemSymbolName: Self.idleIcon, accessibilityDescription: "Explain")
     }
@@ -383,22 +419,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// used by the hotkey/menu item, and the only way audio gets sent when
     /// Manual Push is enabled.
     @objc private func pushAudioNow() {
-        guard isActiveModeRunning, Settings.mode == .translateAudio else { return }
-        AudioCapture.shared.flushNow()
+        runAudioTick()
     }
 
-    /// Re-reads Settings.provider each cycle (rather than capturing it once at
-    /// startActiveMode) so a provider change — including via the remote API —
-    /// takes effect on the next tick without needing to restart active mode.
-    private func runActiveModeImageTick() {
-        guard isActiveModeRunning else { return }
-        let provider = Settings.provider
-        guard let apiKey = Keychain.loadAPIKey(for: provider), !apiKey.isEmpty else {
+    /// Pulls whatever's buffered from both audio sources at the same instant
+    /// so they land in one request as two clearly-labeled tracks.
+    private func runAudioTick() {
+        guard isActiveModeRunning, Settings.mode == .translateAudio else { return }
+        guard let apiKey = Keychain.loadAPIKey(), !apiKey.isEmpty else {
             stopActiveMode()
             return
         }
+        let micEnabled = Settings.micCaptureEnabled
         Task {
-            guard let imageData = await CaptureManager.captureFullScreen() else { return }
+            async let systemWav = AudioCapture.shared.flush()
+            async let micWav: Data? = micEnabled ? MicrophoneCapture.shared.flush() : nil
+            let (systemAudio, micAudio) = await (systemWav, micWav)
+            guard systemAudio != nil || micAudio != nil else { return }
+            processAudioChunk(micAudio: micAudio, systemAudio: systemAudio, apiKey: apiKey)
+        }
+    }
+
+    private func runActiveModeImageTick() {
+        guard isActiveModeRunning else { return }
+        guard let apiKey = Keychain.loadAPIKey(), !apiKey.isEmpty else {
+            stopActiveMode()
+            return
+        }
+        let region = activeModeRegion
+        Task {
+            guard let imageData = await CaptureManager.captureFullScreen(region: region) else { return }
             guard isActiveModeRunning, let panel = ResultPanel.shared else { return }
 
             do {
@@ -415,9 +465,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
                 switch Settings.mode {
                 case .translateScreen:
-                    try await AIClient.translateImage(pngData: imageData, provider: provider, targetLanguage: Settings.targetLanguage, apiKey: apiKey, onDelta: onDelta)
+                    try await GeminiClient.translateImage(pngData: imageData, targetLanguage: Settings.targetLanguage, apiKey: apiKey, onDelta: onDelta)
                 case .explain:
-                    try await AIClient.explainImage(pngData: imageData, provider: provider, apiKey: apiKey, onDelta: onDelta)
+                    try await GeminiClient.explainImage(pngData: imageData, apiKey: apiKey, onDelta: onDelta)
                 case .translateAudio:
                     break
                 }
@@ -433,19 +483,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Translated audio streams into the panel as a running transcript
     /// (rather than replacing it each chunk) so a multi-speaker conversation
     /// stays readable across turns.
-    private func processAudioChunk(_ wavData: Data) {
+    private func processAudioChunk(micAudio: Data?, systemAudio: Data?, apiKey: String) {
         guard isActiveModeRunning, let panel = ResultPanel.shared else { return }
-        let provider = Settings.provider
-        guard let apiKey = Keychain.loadAPIKey(for: provider), !apiKey.isEmpty else {
-            stopActiveMode()
-            return
-        }
         let contextForThisChunk = lastAudioTranscript
         Task {
             do {
                 var isFirstDeltaOfChunk = true
                 var fullText = ""
-                try await AIClient.translateAudio(wavData: wavData, provider: provider, targetLanguage: Settings.targetLanguage, previousContext: contextForThisChunk, apiKey: apiKey) { chunk in
+                try await GeminiClient.translateAudio(micAudio: micAudio, systemAudio: systemAudio, targetLanguage: Settings.targetLanguage, previousContext: contextForThisChunk, apiKey: apiKey) { chunk in
                     fullText += chunk
                     DispatchQueue.main.async {
                         if isFirstDeltaOfChunk {
@@ -491,19 +536,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Settings prompts
 
-    @objc private func promptForClaudeKey() { promptForAPIKey(provider: .claude) }
-    @objc private func promptForGeminiKey() { promptForAPIKey(provider: .gemini) }
-
-    private func promptForAPIKey(provider: AIProvider) {
+    @objc private func promptForAPIKey() {
         let alert = NSAlert()
-        alert.messageText = "\(provider.displayName) API Key"
-        alert.informativeText = "Enter your \(provider.displayName) API key. It's stored securely in the macOS Keychain."
+        alert.messageText = "Gemini API Key"
+        alert.informativeText = "Enter your Gemini API key. It's stored securely in the macOS Keychain."
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
 
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        field.placeholderString = provider.apiKeyPlaceholder
-        if let existing = Keychain.loadAPIKey(for: provider) {
+        field.placeholderString = "AIza..."
+        if let existing = Keychain.loadAPIKey() {
             field.stringValue = existing
         }
         alert.accessoryView = field
@@ -514,7 +556,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if response == .alertFirstButtonReturn {
             let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             if !key.isEmpty {
-                Keychain.saveAPIKey(key, for: provider)
+                Keychain.saveAPIKey(key)
             }
         }
     }
@@ -549,13 +591,12 @@ extension AppDelegate: RemoteServerDelegate {
     func remoteStatus() -> RemoteStatus {
         RemoteStatus(
             activeModeRunning: isActiveModeRunning,
-            provider: Settings.provider.rawValue,
-            availableProviders: AIProvider.allCases.map(\.rawValue),
             mode: Settings.mode.rawValue,
             availableModes: AppMode.allCases.map(\.rawValue),
             targetLanguage: Settings.targetLanguage,
             interval: Settings.activeModeInterval,
             manualPushEnabled: Settings.audioManualPushEnabled,
+            micEnabled: Settings.micCaptureEnabled,
             panelTitle: ResultPanel.shared?.title ?? "",
             transcript: ResultPanel.shared?.currentText ?? ""
         )
@@ -563,10 +604,6 @@ extension AppDelegate: RemoteServerDelegate {
 
     func remoteToggleActiveMode() {
         toggleActiveMode()
-    }
-
-    func remoteSetProvider(_ provider: AIProvider) {
-        applyProvider(provider)
     }
 
     func remoteSetMode(_ mode: AppMode) {
@@ -583,6 +620,10 @@ extension AppDelegate: RemoteServerDelegate {
 
     func remoteSetManualPush(_ enabled: Bool) {
         applyAudioManualPush(enabled)
+    }
+
+    func remoteSetMicEnabled(_ enabled: Bool) {
+        applyMicCapture(enabled)
     }
 
     func remotePushAudioNow() {

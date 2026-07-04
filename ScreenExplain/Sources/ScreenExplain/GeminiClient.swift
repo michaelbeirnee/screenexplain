@@ -38,13 +38,20 @@ enum GeminiClient {
     You translate spoken audio captured live from a screen or call. \
     Transcribe the speech and translate it. This audio is one short segment \
     of an ongoing recording, so multiple speakers may appear across segments. \
-    Distinguish speakers by voice and label every line with a tag like \
-    "Speaker 1:", "Speaker 2:", etc. You'll be given the tail of the previous \
-    segment's transcript so you can reuse the same speaker numbers for voices \
-    you recognize — only introduce a new speaker number for a voice that \
-    genuinely hasn't appeared before. Output only the translated, \
-    speaker-labeled lines with no other commentary, timestamps, or markdown. \
-    If the audio is silent or has no discernible speech, output nothing.
+    You may be given one or two separate audio tracks, each preceded by a \
+    text label identifying its source. If a track is labeled as the user's \
+    microphone, label every line transcribed from it "You:" — never number \
+    it as a speaker. If a track is labeled as system/call audio, distinguish \
+    voices within it by ear and label them "Speaker 1:", "Speaker 2:", etc. \
+    You'll be given the tail of the previous segment's transcript so you can \
+    reuse the same speaker numbers for voices you recognize — only introduce \
+    a new speaker number for a voice that genuinely hasn't appeared before. \
+    If both tracks are present, interleave the lines into one chronological \
+    transcript as best you can judge from context; if you can't tell the \
+    order, list the microphone track's lines first. Output only the \
+    translated, labeled lines with no other commentary, timestamps, or \
+    markdown. If a track is silent or has no discernible speech, say nothing \
+    about it.
     """
 
     static func explainImage(pngData: Data, apiKey: String, onDelta: @escaping (String) -> Void) async throws {
@@ -71,8 +78,22 @@ enum GeminiClient {
         )
     }
 
-    static func translateAudio(wavData: Data, targetLanguage: String, previousContext: String?, apiKey: String, onDelta: @escaping (String) -> Void) async throws {
-        var promptText = "Translate the speech in this audio into \(targetLanguage)."
+    /// Either audio track may be omitted, but at least one must be present.
+    /// Passing both lets the model tell "you talking" apart from "audio
+    /// playing from the call" by source rather than guessing from voice alone.
+    static func translateAudio(micAudio: Data?, systemAudio: Data?, targetLanguage: String, previousContext: String?, apiKey: String, onDelta: @escaping (String) -> Void) async throws {
+        var parts: [[String: Any]] = []
+
+        if let micAudio {
+            parts.append(["inline_data": ["mime_type": "audio/wav", "data": micAudio.base64EncodedString()]])
+            parts.append(["text": "The audio track above is from the user's own microphone."])
+        }
+        if let systemAudio {
+            parts.append(["inline_data": ["mime_type": "audio/wav", "data": systemAudio.base64EncodedString()]])
+            parts.append(["text": "The audio track above is system/call audio (e.g. other participants on a Zoom call)."])
+        }
+
+        var promptText = "Translate the speech in the audio above into \(targetLanguage)."
         if let previousContext, !previousContext.isEmpty {
             promptText = """
             Tail of the previous segment's transcript, for speaker-numbering \
@@ -84,12 +105,10 @@ enum GeminiClient {
             \(promptText)
             """
         }
+        parts.append(["text": promptText])
 
         try await stream(
-            parts: [
-                ["inline_data": ["mime_type": "audio/wav", "data": wavData.base64EncodedString()]],
-                ["text": promptText]
-            ],
+            parts: parts,
             systemPrompt: translateAudioSystemPrompt,
             apiKey: apiKey,
             onDelta: onDelta

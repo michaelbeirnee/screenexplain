@@ -3,15 +3,16 @@ import Security
 
 enum Keychain {
     private static let service = "com.local.screenexplain"
+    private static let apiKeyAccount = "gemini_api_key"
     private static let remoteTokenAccount = "remote_access_token"
 
-    static func loadAPIKey(for provider: AIProvider) -> String? {
-        load(account: provider.keychainAccount)
+    static func loadAPIKey() -> String? {
+        load(account: apiKeyAccount)
     }
 
     @discardableResult
-    static func saveAPIKey(_ key: String, for provider: AIProvider) -> Bool {
-        save(key, account: provider.keychainAccount)
+    static func saveAPIKey(_ key: String) -> Bool {
+        save(key, account: apiKeyAccount)
     }
 
     static func loadRemoteAccessToken() -> String? {

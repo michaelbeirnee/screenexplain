@@ -2,17 +2,12 @@ import Foundation
 
 enum Settings {
     private static let defaults = UserDefaults.standard
-    private static let providerKey = "selectedProvider"
     private static let modeKey = "selectedMode"
     private static let targetLanguageKey = "targetLanguage"
     private static let intervalKey = "activeModeInterval"
     private static let audioManualPushKey = "audioManualPush"
     private static let remoteServerEnabledKey = "remoteServerEnabled"
-
-    static var provider: AIProvider {
-        get { AIProvider(rawValue: defaults.string(forKey: providerKey) ?? "") ?? .claude }
-        set { defaults.set(newValue.rawValue, forKey: providerKey) }
-    }
+    private static let micCaptureDisabledKey = "micCaptureDisabled"
 
     static var mode: AppMode {
         get { AppMode(rawValue: defaults.string(forKey: modeKey) ?? "") ?? .explain }
@@ -49,5 +44,13 @@ enum Settings {
     static var remoteServerEnabled: Bool {
         get { defaults.bool(forKey: remoteServerEnabledKey) }
         set { defaults.set(newValue, forKey: remoteServerEnabledKey) }
+    }
+
+    /// Whether Translate Audio mode also captures the microphone as a second,
+    /// separately-labeled track (defaults on — that's what lets the model
+    /// tell "you talking" apart from call audio instead of guessing).
+    static var micCaptureEnabled: Bool {
+        get { !defaults.bool(forKey: micCaptureDisabledKey) }
+        set { defaults.set(!newValue, forKey: micCaptureDisabledKey) }
     }
 }
