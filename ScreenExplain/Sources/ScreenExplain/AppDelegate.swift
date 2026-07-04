@@ -21,15 +21,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isActiveModeRunning = false
     private var lastAudioTranscript = ""
     private var audioPanelStarted = false
-    /// Screen + rect chosen via RegionSelector for this active-mode session.
-    /// Persists across in-place restarts (e.g. changing the interval) so
-    /// those don't re-prompt; only a fresh Active Mode toggle-on does.
-    private var activeModeRegion: SelectedRegion?
 
     private var isClickModeRunning = false
-    private var clickModeRegion: SelectedRegion?
     private var clickModeMonitor: Any?
     private var isClickCapturing = false
+
+    /// Screen + rect chosen via RegionSelector — shared by Active Mode, Click
+    /// to Explain, and the remote "explain now" trigger, so picking it once
+    /// (via either feature) makes it available to all of them. Persists
+    /// until a fresh selection overwrites it; stopping a mode never clears it.
+    private var selectedRegion: SelectedRegion?
 
     private static let idleIcon = "text.viewfinder"
     private static let activeIcon = "eye.fill"
@@ -357,11 +358,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case .explain, .translateScreen:
             RegionSelector.choose { [weak self] region in
                 guard let self, let region else { return }
-                self.activeModeRegion = region
+                self.selectedRegion = region
                 self.beginActiveMode(apiKey: apiKey)
             }
         case .translateAudio:
-            activeModeRegion = nil
             beginActiveMode(apiKey: apiKey)
         }
     }
@@ -370,7 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// whatever region was already chosen instead of prompting again.
     private func restartActiveModeKeepingRegion() {
         guard let apiKey = Keychain.loadAPIKey(), !apiKey.isEmpty else { return }
-        if Settings.mode != .translateAudio && activeModeRegion == nil {
+        if Settings.mode != .translateAudio && selectedRegion == nil {
             startActiveMode()
             return
         }
@@ -475,7 +475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         RegionSelector.choose { [weak self] region in
             guard let self, let region else { return }
-            self.clickModeRegion = region
+            self.selectedRegion = region
             self.isClickModeRunning = true
             self.updateStatusIcon()
             self.setUpClickModeMonitor()
@@ -484,7 +484,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func stopClickMode() {
         isClickModeRunning = false
-        clickModeRegion = nil
         if let clickModeMonitor {
             NSEvent.removeMonitor(clickModeMonitor)
         }
@@ -500,11 +499,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func handleClickModeTrigger(at point: NSPoint) {
-        guard isClickModeRunning, !isClickCapturing, let region = clickModeRegion else { return }
+        guard isClickModeRunning, let region = selectedRegion else { return }
         guard let apiKey = Keychain.loadAPIKey(), !apiKey.isEmpty else {
             stopClickMode()
             return
         }
+        performRegionCapture(region: region, apiKey: apiKey, near: point)
+    }
+
+    /// Shared by the local Option+Click trigger and the remote "explain now"
+    /// trigger — captures the given region and runs it through runOneShot.
+    private func performRegionCapture(region: SelectedRegion, apiKey: String, near point: NSPoint) {
+        guard !isClickCapturing else { return }
         isClickCapturing = true
 
         Task {
@@ -515,6 +521,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.runOneShot(imageData: imageData, apiKey: apiKey, near: point)
             }
         }
+    }
+
+    /// Remote equivalent of an Option+Click: captures whatever region was
+    /// last selected (via Active Mode or Click to Explain) right now,
+    /// without needing anyone physically at the Mac. Returns false if there's
+    /// no region yet or the current mode doesn't support it.
+    private func explainNow() -> Bool {
+        guard let apiKey = Keychain.loadAPIKey(), !apiKey.isEmpty else { return false }
+        guard Settings.mode != .translateAudio else { return false }
+        guard let region = selectedRegion else { return false }
+        performRegionCapture(region: region, apiKey: apiKey, near: topRightScreenPoint())
+        return true
+    }
+
+    private func topRightScreenPoint() -> NSPoint {
+        guard let screen = NSScreen.main else { return NSPoint(x: 100, y: 100) }
+        let visible = screen.visibleFrame
+        return NSPoint(x: visible.maxX, y: visible.maxY)
     }
 
     /// Manually flushes whatever audio has buffered since the last chunk —
@@ -548,7 +572,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             stopActiveMode()
             return
         }
-        let region = activeModeRegion
+        let region = selectedRegion
         Task {
             guard let imageData = await CaptureManager.captureFullScreen(region: region) else { return }
             guard isActiveModeRunning, let panel = ResultPanel.shared else { return }
@@ -694,6 +718,7 @@ extension AppDelegate: RemoteServerDelegate {
         RemoteStatus(
             activeModeRunning: isActiveModeRunning,
             clickModeRunning: isClickModeRunning,
+            hasSelectedRegion: selectedRegion != nil,
             mode: Settings.mode.rawValue,
             availableModes: AppMode.allCases.map(\.rawValue),
             targetLanguage: Settings.targetLanguage,
@@ -735,5 +760,9 @@ extension AppDelegate: RemoteServerDelegate {
 
     func remotePushAudioNow() {
         pushAudioNow()
+    }
+
+    func remoteExplainNow() -> Bool {
+        explainNow()
     }
 }

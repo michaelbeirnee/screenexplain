@@ -11,11 +11,16 @@ protocol RemoteServerDelegate: AnyObject {
     func remoteSetManualPush(_ enabled: Bool)
     func remoteSetMicEnabled(_ enabled: Bool)
     func remotePushAudioNow()
+    /// Captures whatever region was last selected and explains/translates it
+    /// right now — the remote equivalent of an Option+Click. Returns false if
+    /// no region has ever been selected yet, or the mode doesn't support it.
+    func remoteExplainNow() -> Bool
 }
 
 struct RemoteStatus: Codable {
     var activeModeRunning: Bool
     var clickModeRunning: Bool
+    var hasSelectedRegion: Bool
     var mode: String
     var availableModes: [String]
     var targetLanguage: String
@@ -152,6 +157,13 @@ final class RemoteServer: @unchecked Sendable {
 
         case (.POST, "/api/push-audio-now"):
             await MainActor.run { delegate.remotePushAudioNow() }
+            return Self.json(.ok, ["ok": true])
+
+        case (.POST, "/api/explain-now"):
+            let started = await MainActor.run { delegate.remoteExplainNow() }
+            guard started else {
+                return Self.json(.badRequest, ["error": "No region selected yet — use Click to Explain or Active Mode locally once first, and make sure the mode isn't Translate Audio."])
+            }
             return Self.json(.ok, ["ok": true])
 
         default:

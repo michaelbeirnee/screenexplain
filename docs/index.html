@@ -189,14 +189,20 @@
       <span id="connLabel">Connecting…</span>
     </div>
 
+    <div class="row" style="margin-bottom: 12px;">
+      <button id="explainNowButton">Explain Now</button>
+      <button id="toggleActiveButton" class="secondary">Toggle Active Mode</button>
+      <button id="toggleClickButton" class="secondary">Toggle Click to Explain</button>
+    </div>
     <div class="row" style="margin-bottom: 16px;">
-      <button id="toggleActiveButton">Toggle Active Mode</button>
-      <button id="toggleClickButton">Toggle Click to Explain</button>
       <button id="pushAudioButton" class="secondary">Push Audio Now</button>
       <button id="disconnectButton" class="secondary" style="margin-left: auto;">Change Server…</button>
     </div>
     <p class="subtitle" id="clickModeHint" style="display: none; margin-top: -10px;">
       Armed — a selection overlay will appear on the Mac's screen; someone needs to be at the machine to drag out the region.
+    </p>
+    <p class="subtitle" id="noRegionHint" style="display: none; margin-top: -10px;">
+      No region selected yet — turn on Active Mode or Click to Explain locally once to pick a screen/area, then Explain Now will reuse it.
     </p>
 
     <div class="grid">
@@ -257,9 +263,11 @@
 
   const connDot = document.getElementById('connDot');
   const connLabel = document.getElementById('connLabel');
+  const explainNowButton = document.getElementById('explainNowButton');
   const toggleActiveButton = document.getElementById('toggleActiveButton');
   const toggleClickButton = document.getElementById('toggleClickButton');
   const clickModeHint = document.getElementById('clickModeHint');
+  const noRegionHint = document.getElementById('noRegionHint');
   const pushAudioButton = document.getElementById('pushAudioButton');
   const modeSelect = document.getElementById('modeSelect');
   const intervalSelect = document.getElementById('intervalSelect');
@@ -317,6 +325,10 @@
     toggleActiveButton.textContent = status.activeModeRunning ? 'Stop Active Mode' : 'Start Active Mode';
     toggleClickButton.textContent = status.clickModeRunning ? 'Stop Click to Explain' : 'Start Click to Explain';
     clickModeHint.style.display = status.clickModeRunning ? 'block' : 'none';
+
+    const canExplainNow = status.hasSelectedRegion && status.mode !== 'translateAudio';
+    explainNowButton.disabled = !canExplainNow;
+    noRegionHint.style.display = status.hasSelectedRegion ? 'none' : 'block';
 
     if (modeSelect.dataset.filled !== '1') {
       const labels = { explain: 'Explain', translateScreen: 'Translate Screen Text', translateAudio: 'Translate Audio (Live)' };
@@ -399,6 +411,13 @@
     clearConfig();
     config = null;
     showSetup();
+  });
+
+  explainNowButton.addEventListener('click', async () => {
+    try {
+      await api('/api/explain-now', { method: 'POST' });
+      poll();
+    } catch (err) { showError(err.message); }
   });
 
   toggleActiveButton.addEventListener('click', async () => {
